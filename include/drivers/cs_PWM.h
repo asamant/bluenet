@@ -180,6 +180,9 @@ private:
 	//! Integral of the tick offset.
 	int32_t _zeroCrossOffsetIntegral;
 
+	//! Current PWM timer tick value; needed for zero crossing slope compensation
+	uint32_t _currTicks = 0;
+
 	//! Whether currently synchronizing frequency (else synchronizing timer start).
 	bool _syncFrequency;
 
@@ -225,6 +228,10 @@ private:
 	uint32_t readCC(uint8_t channelIdx);
 	//! Wrap around a value, so that it ends up in the range [-max/2, max/2]
 	void wrapAround(int32_t& val, int32_t max);
+
+	//! Convert time from microseconds to ticks based on the timer's clock frequency
+	int32_t convert_us_to_ticks(int32_t time_us);
+
 	//! Function to be called when the offset (in μs) of the previous zero crossing was calculated.
 	void onZeroCrossingTimeOffset(int32_t offset);
 

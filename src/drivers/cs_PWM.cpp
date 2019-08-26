@@ -353,10 +353,12 @@ void PWM::onZeroCrossing() {
 #endif
 		return;
 	}
-	uint32_t ticks = nrf_timer_cc_read(CS_PWM_TIMER, getTimerChannel(ZERO_CROSSING_CHANNEL_IDX));
+	_currTicks = nrf_timer_cc_read(CS_PWM_TIMER, getTimerChannel(ZERO_CROSSING_CHANNEL_IDX));
+
+	return;
 
 	int32_t targetTicks = 0;
-	int32_t errTicks = ticks - targetTicks;
+	int32_t errTicks = _currTicks - targetTicks;
 
 	// Correct error for wrap around.
 	int32_t maxTickVal = _maxTickVal;
@@ -377,6 +379,8 @@ void PWM::onZeroCrossing() {
 			return;
 		}
 		_zeroCrossingCounter = 0;
+
+		return;
 
 		// https://en.wikipedia.org/wiki/Repeated_median_regression
         // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,
@@ -502,19 +506,66 @@ void PWM::onZeroCrossing() {
 #endif
 }
 
+
+int32_t PWM::convert_us_to_ticks(int32_t time_us){
+
+	// Nordic SDK's API expects an unsigned int for the time parameter.
+	// In case we need to convert a negative value, just multiply it by the no of ticks for 1 us
+
+	if (time_us >= 0){
+		return nrf_timer_us_to_ticks(time_us, CS_PWM_TIMER_FREQ);
+	}
+
+	// Could also be:
+	// return -nrf_timer_us_to_ticks(-time_us, CS_PWM_TIMER_FREQ);
+	// But the implementation below makes the process more explicit.
+
+	int32_t one_us_in_ticks = nrf_timer_us_to_ticks(1, CS_PWM_TIMER_FREQ);
+	return one_us_in_ticks*time_us;
+}
+
 void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 	// Although it might happen that we subtract from the wrong entry, it should improve the measurements.
 	// TODO: at the last sample, the counter was set to 0, making it not being compensated by the offset.
+
+
+	int32_t offsetInTicks = convert_us_to_ticks(offset);
+
 	if (_zeroCrossingCounter > 0) {
-		_offsets[_zeroCrossingCounter - 1] -= nrf_timer_us_to_ticks(offset, CS_PWM_TIMER_FREQ);
+		// By the time the code has reached this point, the zero counter is already incremented by 1 (via the onZeroCrossing interrupt).
+		// Hence, the offset has to be subtracted at one index lower.
+		_offsets[_zeroCrossingCounter - 1] -= offsetInTicks;
 	}
+
+	int32_t targetTicks = 0;
+	int32_t errTicks = _currTicks - targetTicks - offsetInTicks;
+
+	int32_t errTicks_raw = _currTicks - targetTicks;
+
+	// Correct error for wrap around.
+	int32_t maxTickVal = _maxTickVal;
+	wrapAround(errTicks, maxTickVal);
+	wrapAround(errTicks_raw, maxTickVal);
+
+	cs_write("err=%i \r\n", errTicks);
+	cs_write("err_raw=%i \r\n", errTicks_raw);
 }
 
 void PWM::handleEvent(event_t & event) {
-	if (event.type == CS_TYPE::EVT_ZERO_CROSSING_TIME_OFFSET) {
+	switch (event.type) {
+	case (CS_TYPE::EVT_ZERO_CROSSING_TIME_OFFSET) : {
 		int32_t offset = *(TYPIFY(EVT_ZERO_CROSSING_TIME_OFFSET)*)event.data;
 		cs_write("off=%i \r\n", offset);
 		onZeroCrossingTimeOffset(offset);
+
+		break;
+		}
+	case (CS_TYPE::EVT_ADC_RESTARTED) : {
+		cs_write("ADC RESTART!\r\n");
+		break;
+	}
+
+	default : {}
 	}
 }
 
