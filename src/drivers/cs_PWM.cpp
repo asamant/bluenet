@@ -355,8 +355,6 @@ void PWM::onZeroCrossing() {
 	}
 	_currTicks = nrf_timer_cc_read(CS_PWM_TIMER, getTimerChannel(ZERO_CROSSING_CHANNEL_IDX));
 
-	return;
-
 	int32_t targetTicks = 0;
 	int32_t errTicks = _currTicks - targetTicks;
 
@@ -370,77 +368,7 @@ void PWM::onZeroCrossing() {
 	_offsets[_zeroCrossingCounter] = errTicks;
 	++_zeroCrossingCounter;
 
-
-	if (_syncFrequency) {
-		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE) {
-#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
-	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
-#endif
-			return;
-		}
-		_zeroCrossingCounter = 0;
-
-		return;
-
-		// https://en.wikipedia.org/wiki/Repeated_median_regression
-        // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,
-		// but have to do that DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC times.
-		int k = 0;
-		for (int i=0; i<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++i) {
-			int n = 0;
-			for (int j=0; j<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++j) {
-				if (i == j) {
-					continue;
-				}
-				int32_t dy = _offsets[j] - _offsets[i];
-				wrapAround(dy, maxTickVal);
-				int32_t slope = dy / (j - i);
-				_offsetSlopes[n] = slope;
-				++n;
-			}
-			_offsetSlopes2[k] = opt_med6(_offsetSlopes);
-			++k;
-		}
-		_offsetSlopes3[_numSyncs] = opt_med7(_offsetSlopes2);
-		++_numSyncs;
-
-		cs_write("offsets:");
-		for (int i=0; i<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++i) {
-			cs_write(" %i", _offsets[i]);
-		}
-		cs_write("\r\n");
-		cs_write("slope=%i\r\n", _offsetSlopes3[_numSyncs]);
-
-		if (_numSyncs < DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC) {
-#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
-	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
-#endif
-			return;
-		}
-		_numSyncs = 0;
-		int32_t medianSlope = medianSlopeMedian(_offsetSlopes3);
-		// Every full cycle (~20ms), the offset increases by slope.
-		// So the maxTickVal (half cycle, ~10ms) should be increased by half the slope.
-		_adjustedMaxTickVal += medianSlope / 2;
-
-		// Make sure the minimum max ticks > 0.99 * _maxTickVal, else dimming at 99% won't work anymore.
-		uint32_t minMaxTickVal = _maxTickVal * 99 / 100 + 1;
-		if (_adjustedMaxTickVal < minMaxTickVal) {
-			_adjustedMaxTickVal = minMaxTickVal;
-		}
-
-		// Store frequency synchronized max ticks.
-		_freqSyncedMaxTickVal = _adjustedMaxTickVal;
-
-		// Done with frequency synchronization.
-		_syncFrequency = false;
-
-//		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
-
-		// Set the new period time at the end of the current period.
-		enableInterrupt();
-	}
-	else {
+	if (!_syncFrequency){
 		// Integrate error, but limit the integrated error (to prevent overshoot).
 		// Careful that this doesn't overflow.
 		_zeroCrossOffsetIntegral += errTicks;
@@ -528,7 +456,6 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 	// Although it might happen that we subtract from the wrong entry, it should improve the measurements.
 	// TODO: at the last sample, the counter was set to 0, making it not being compensated by the offset.
 
-
 	int32_t offsetInTicks = convert_us_to_ticks(offset);
 
 	if (_zeroCrossingCounter > 0) {
@@ -537,25 +464,91 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		_offsets[_zeroCrossingCounter - 1] -= offsetInTicks;
 	}
 
-	int32_t targetTicks = 0;
-	int32_t errTicks = _currTicks - targetTicks - offsetInTicks;
+	if (_syncFrequency) {
+		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE) {
+#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
+	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
+#endif
+			return;
+		}
+		_zeroCrossingCounter = 0;
 
-	int32_t errTicks_raw = _currTicks - targetTicks;
+		// Correct error for wrap around.
+		int32_t maxTickVal = _maxTickVal;
 
-	// Correct error for wrap around.
-	int32_t maxTickVal = _maxTickVal;
-	wrapAround(errTicks, maxTickVal);
-	wrapAround(errTicks_raw, maxTickVal);
+		// https://en.wikipedia.org/wiki/Repeated_median_regression
+        // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,
+		// but have to do that DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC times.
+		int k = 0;
+		for (int i=0; i<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++i) {
+			int n = 0;
+			for (int j=0; j<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++j) {
+				if (i == j) {
+					continue;
+				}
+				int32_t dy = _offsets[j] - _offsets[i];
+				wrapAround(dy, maxTickVal);
+				int32_t slope = dy / (j - i);
+				_offsetSlopes[n] = slope;
+				++n;
+			}
+			_offsetSlopes2[k] = opt_med6(_offsetSlopes);
+			++k;
+		}
+		_offsetSlopes3[_numSyncs] = opt_med7(_offsetSlopes2);
+		++_numSyncs;
 
-	cs_write("err=%i \r\n", errTicks);
-	cs_write("err_raw=%i \r\n", errTicks_raw);
+		/*
+		cs_write("offsets:");
+		for (int i=0; i<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++i) {
+			cs_write(" %i", _offsets[i]);
+		}
+		*/
+
+		// cs_write("\r\n");
+		// cs_write("slope=%i\r\n", _offsetSlopes3[_numSyncs]);
+
+
+		if (_numSyncs < DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC) {
+#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
+	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
+#endif
+			return;
+		}
+		_numSyncs = 0;
+		int32_t medianSlope = medianSlopeMedian(_offsetSlopes3);
+
+		cs_write("%i \r\n", medianSlope);
+
+		// Every full cycle (~20ms), the offset increases by slope.
+		// So the maxTickVal (half cycle, ~10ms) should be increased by half the slope.
+		_adjustedMaxTickVal += medianSlope / 2;
+
+		// Make sure the minimum max ticks > 0.99 * _maxTickVal, else dimming at 99% won't work anymore.
+		uint32_t minMaxTickVal = _maxTickVal * 99 / 100 + 1;
+		if (_adjustedMaxTickVal < minMaxTickVal) {
+			_adjustedMaxTickVal = minMaxTickVal;
+		}
+
+		// Store frequency synchronized max ticks.
+		_freqSyncedMaxTickVal = _adjustedMaxTickVal;
+
+		// Done with frequency synchronization.
+		_syncFrequency = false;
+
+//		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
+
+		// Set the new period time at the end of the current period.
+		enableInterrupt();
+	}
+
 }
 
 void PWM::handleEvent(event_t & event) {
 	switch (event.type) {
 	case (CS_TYPE::EVT_ZERO_CROSSING_TIME_OFFSET) : {
 		int32_t offset = *(TYPIFY(EVT_ZERO_CROSSING_TIME_OFFSET)*)event.data;
-		cs_write("off=%i \r\n", offset);
+		// cs_write("off=%i \r\n", offset);
 		onZeroCrossingTimeOffset(offset);
 
 		break;

@@ -23,7 +23,7 @@
 /**
  * Number of slope estimates until the timer max ticks are adjusted to synchronize with the grid frequency.
  */
-#define DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC 5
+#define DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC 7
 
 /**
  * Number of zero crossings until the timer max ticks is adjusted to synchronize the timer start with the grid zero crossing.
