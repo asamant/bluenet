@@ -15,6 +15,11 @@
 #define ERR_PWM_NOT_ENABLED 1
 
 /**
+ * Number of median values to consider for calculating slopes between error offsets in order to sync
+ */
+#define NUM_MEDIANS_FOR_FREQUENCY_SYNC 8
+
+/**
  * Number of zero crossings to calculate the slope of the error.
  * /!\ Currently hard coded to be 7 /!\
  */
@@ -23,12 +28,12 @@
 /**
  * Number of slope estimates until the timer max ticks are adjusted to synchronize with the grid frequency.
  */
-#define DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC 7
+#define DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC 5
 
 /**
  * Number of zero crossings until the timer max ticks is adjusted to synchronize the timer start with the grid zero crossing.
  */
-#define DIMMER_NUM_CROSSINGS_FOR_START_SYNC 9
+#define DIMMER_NUM_CROSSINGS_FOR_START_SYNC 5
 
 /**
  * Number of timer start synchronizations until synchronizing frequency again.
@@ -167,13 +172,19 @@ private:
 	//! Counter to keep up the number of zero crossing callbacks.
 	uint32_t _zeroCrossingCounter = 0;
 
+	//! Counter to keep a track of median values used for calculating the slope of offsets.
+	uint32_t _medianCounter = 0;
+
+	//! Array of median values for calculating the slope of offsets.
+	int32_t _medianOffsetValues[NUM_MEDIANS_FOR_FREQUENCY_SYNC];
+
 	//! Array of tick counts at the moment of a zero crossing interrupt.
-	int32_t _offsets[MAX(DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE, DIMMER_NUM_CROSSINGS_FOR_START_SYNC)];
+	int32_t _offsets[DIMMER_NUM_CROSSINGS_FOR_START_SYNC];
 
 	//! Array of calculated slopes between 1 point and all other points.
-	int32_t _offsetSlopes[DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE-1];
+	int32_t _offsetSlopes[DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC-1];
 	//! Array of median of calculated slopes.
-	int32_t _offsetSlopes2[DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE];
+	int32_t _offsetSlopes2[DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC];
 	//! Array of median of median of calculated slopes.
 	int32_t _offsetSlopes3[DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC];
 

@@ -28,6 +28,9 @@
 #define SECONDARY_CHANNEL_IDX       4
 #define SECONDARY_CAPTURE_TASK      NRF_TIMER_TASK_CAPTURE4
 
+// TEMP: To decide dimming algorithm based on crownstone version
+#define IS_SHITTY_POWER_MEAS 1
+
 
 // Timer channel to capture the timer counter at the zero crossing.
 #define ZERO_CROSSING_CHANNEL_IDX   3
@@ -36,6 +39,15 @@
 // Define test pin to enable gpio debug.
 #define PWM_DEBUG_PIN_ZERO_CROSSING_INT 16
 #define PWM_DEBUG_PIN_TIMER_INT 17
+
+// No of average values to consider
+#define AVERAGE_ERROR_COUNT 10
+
+// To take fewer samples of median values for calculating the offset slope
+#define INTER_MEDIAN_INTERVAL 8
+
+// To revert:
+uint8_t _intervalCounter = 0;
 
 PWM::PWM() :
 		_initialized(false),
@@ -465,29 +477,80 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 	}
 
 	if (_syncFrequency) {
-		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE) {
+		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_FOR_START_SYNC) {
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
 	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
 #endif
 			return;
 		}
+		++_intervalCounter;
 		_zeroCrossingCounter = 0;
 
-		// Correct error for wrap around.
-		int32_t maxTickVal = _maxTickVal;
+		if (IS_SHITTY_POWER_MEAS){
+
+			if (_intervalCounter < INTER_MEDIAN_INTERVAL){
+				// Need more time between median samples for calculating slopes
+				return;
+			}
+
+			int32_t medianVal = opt_med5(_offsets);
+			_intervalCounter = 0;
+
+			cs_write("median=%i \r\n",medianVal);
+
+			_medianOffsetValues[_medianCounter] = medianVal;
+
+			++_medianCounter;
+
+			// cs_write("medianErr=%i\r\n", medianVal);
+
+			if (_medianCounter < NUM_MEDIANS_FOR_FREQUENCY_SYNC) {
+				return;
+			}
+
+			_medianCounter = 0;
+
+			return;
+
+			/* AVERAGING METHOD
+			 *
+			uint8_t n = 0;
+			int32_t avg_median_err = 0;
+			for (uint8_t i = 4; i < NUM_MEDIANS_FOR_FREQUENCY_SYNC; i+=4){
+				int32_t diffMed = _medianOffsetValues[i] - _medianOffsetValues[i-4];
+				if (diffMed < -maxTickVal/2 || diffMed > maxTickVal/2){
+					// Rollover of values. Do nothing.
+				}
+				else {
+					avg_median_err += diffMed;
+					++n;
+					cs_write("err=%i \r\n", diffMed);
+				}
+			}
+
+			if (n > 0){
+				avg_median_err /= n;
+				// cs_write("avg_err=%i \r\n", avg_median_err);
+			}
+			*/
+		}
 
 		// https://en.wikipedia.org/wiki/Repeated_median_regression
         // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,
 		// but have to do that DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC times.
+
+		// Correct error for wrap around.
+		int32_t maxTickVal = _maxTickVal;
+
 		int k = 0;
-		for (int i=0; i<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++i) {
+		for (int i=0; i<DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC; ++i) {
 			int n = 0;
-			for (int j=0; j<DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE; ++j) {
+			for (int j=0; j<DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC; ++j) {
 				if (i == j) {
 					continue;
 				}
-				int32_t dy = _offsets[j] - _offsets[i];
-				wrapAround(dy, maxTickVal);
+				int32_t dy = _medianOffsetValues[j] - _medianOffsetValues[i];
+				wrapAround(dy, maxTickVal); // ideally wrapping around should not be required
 				int32_t slope = dy / (j - i);
 				_offsetSlopes[n] = slope;
 				++n;
@@ -496,6 +559,9 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 			++k;
 		}
 		_offsetSlopes3[_numSyncs] = opt_med7(_offsetSlopes2);
+
+		cs_write("slope=%i \r\n", _offsetSlopes3[_numSyncs]);
+
 		++_numSyncs;
 
 		/*
@@ -506,7 +572,6 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		*/
 
 		// cs_write("\r\n");
-		// cs_write("slope=%i\r\n", _offsetSlopes3[_numSyncs]);
 
 
 		if (_numSyncs < DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC) {
@@ -516,6 +581,10 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 			return;
 		}
 		_numSyncs = 0;
+
+		return;
+
+
 		int32_t medianSlope = medianSlopeMedian(_offsetSlopes3);
 
 		cs_write("%i \r\n", medianSlope);
