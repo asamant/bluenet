@@ -374,7 +374,7 @@ void PWM::onZeroCrossing() {
 	int32_t maxTickVal = _maxTickVal;
 	wrapAround(errTicks, maxTickVal);
 
-//	cs_write("ticks=%u err=%i \r\n", ticks, errTicks);
+	cs_write("ticks=%u err=%i \r\n", _currTicks, errTicks);
 
 	// Store error.
 	_offsets[_zeroCrossingCounter] = errTicks;
@@ -428,6 +428,7 @@ void PWM::onZeroCrossing() {
 		if (_adjustedMaxTickVal < minMaxTickVal) {
 			_adjustedMaxTickVal = minMaxTickVal;
 		}
+
 
 		++_numSyncs;
 		if (_numSyncs == DIMMER_NUM_START_SYNCS_BETWEEN_FREQ_SYNC) {
@@ -496,7 +497,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 			int32_t medianVal = opt_med5(_offsets);
 			_intervalCounter = 0;
 
-			cs_write("median=%i \r\n",medianVal);
+			// cs_write("median=%i \r\n",medianVal);
 
 			_medianOffsetValues[_medianCounter] = medianVal;
 
@@ -509,8 +510,6 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 			}
 
 			_medianCounter = 0;
-
-			return;
 
 			/* AVERAGING METHOD
 			 *
@@ -539,30 +538,27 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
         // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,
 		// but have to do that DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC times.
 
-		// Correct error for wrap around.
-		int32_t maxTickVal = _maxTickVal;
+		int32_t tempOffsets[3];
+		int32_t tempMedians[NUM_MEDIANS_FOR_FREQUENCY_SYNC - 2];
+		uint8_t n = 0;
 
-		int k = 0;
-		for (int i=0; i<DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC; ++i) {
-			int n = 0;
-			for (int j=0; j<DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC; ++j) {
-				if (i == j) {
-					continue;
-				}
-				int32_t dy = _medianOffsetValues[j] - _medianOffsetValues[i];
-				wrapAround(dy, maxTickVal); // ideally wrapping around should not be required
-				int32_t slope = dy / (j - i);
-				_offsetSlopes[n] = slope;
-				++n;
-			}
-			_offsetSlopes2[k] = opt_med6(_offsetSlopes);
-			++k;
+		for (uint8_t i = 1; i < NUM_MEDIANS_FOR_FREQUENCY_SYNC - 1; ++i){
+			// Being explicit since there are only three values to consider
+			tempOffsets[0] = _medianOffsetValues[i] - _medianOffsetValues[i-1];
+			tempOffsets[1] = _medianOffsetValues[i+1] - _medianOffsetValues[i];
+			tempOffsets[2] = (_medianOffsetValues[i+1] - _medianOffsetValues[i-1])/2;
+
+			int32_t median3 = opt_med3(tempOffsets); // Consider the average instead of the median?
+			tempMedians[n] = median3;
+			++n;
 		}
-		_offsetSlopes3[_numSyncs] = opt_med7(_offsetSlopes2);
 
-		cs_write("slope=%i \r\n", _offsetSlopes3[_numSyncs]);
+		// Store the calculated median values
+		int32_t slope = opt_med6(tempMedians);
 
-		++_numSyncs;
+		// cs_write("med_slope=%i \r\n", slope);
+
+		// ++_numSyncs;
 
 		/*
 		cs_write("offsets:");
@@ -573,6 +569,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 
 		// cs_write("\r\n");
 
+		/*
 
 		if (_numSyncs < DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC) {
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
@@ -582,22 +579,23 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		}
 		_numSyncs = 0;
 
-		return;
+		*/
 
+		int32_t medianSlope = slope;
 
-		int32_t medianSlope = medianSlopeMedian(_offsetSlopes3);
-
-		cs_write("%i \r\n", medianSlope);
+		// cs_write("med_slope=%i \r\n", medianSlope);
 
 		// Every full cycle (~20ms), the offset increases by slope.
 		// So the maxTickVal (half cycle, ~10ms) should be increased by half the slope.
-		_adjustedMaxTickVal += medianSlope / 2;
+		_adjustedMaxTickVal += medianSlope / (2*(INTER_MEDIAN_INTERVAL)*(NUM_MEDIANS_FOR_FREQUENCY_SYNC-1)*(DIMMER_NUM_CROSSINGS_FOR_START_SYNC));
 
 		// Make sure the minimum max ticks > 0.99 * _maxTickVal, else dimming at 99% won't work anymore.
+		/*
 		uint32_t minMaxTickVal = _maxTickVal * 99 / 100 + 1;
 		if (_adjustedMaxTickVal < minMaxTickVal) {
 			_adjustedMaxTickVal = minMaxTickVal;
 		}
+		*/
 
 		// Store frequency synchronized max ticks.
 		_freqSyncedMaxTickVal = _adjustedMaxTickVal;
@@ -605,7 +603,10 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		// Done with frequency synchronization.
 		_syncFrequency = false;
 
-//		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
+		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
+
+		// Correct error for wrap around.
+		// int32_t maxTickVal = _maxTickVal;
 
 		// Set the new period time at the end of the current period.
 		enableInterrupt();
