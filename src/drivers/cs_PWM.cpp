@@ -359,10 +359,10 @@ void PWM::onZeroCrossing() {
 	int32_t errTicks = _currTicks - targetTicks;
 
 	// Correct error for wrap around.
-	int32_t maxTickVal = _maxTickVal;
+	int32_t maxTickVal = _adjustedMaxTickVal;
 	wrapAround(errTicks, maxTickVal);
 
-//	cs_write("ticks=%u err=%i \r\n", ticks, errTicks);
+	// cs_write("ticks=%u err=%i \r\n", _currTicks, errTicks);
 
 	// Store error.
 	_offsets[_zeroCrossingCounter] = errTicks;
@@ -393,19 +393,24 @@ void PWM::onZeroCrossing() {
 		int32_t medianError = errorMedian(_offsets);
 
 		// Proportional part
-		int32_t deltaP = medianError * 1000 / maxTickVal;
+		int32_t deltaP = medianError * 1200 / maxTickVal;
 
 		// Add an integral part to the delta.
-		int32_t deltaI = _zeroCrossOffsetIntegral * 2 / DIMMER_NUM_CROSSINGS_FOR_START_SYNC / maxTickVal;
+		int32_t deltaI = _zeroCrossOffsetIntegral * 1 / DIMMER_NUM_CROSSINGS_FOR_START_SYNC / maxTickVal;
 
-		int32_t delta = deltaP + deltaI;
+		// Experimenting with a D controller
+		int32_t deltaD = (_offsets[7] - _offsets[3]) * 500/maxTickVal; // Arbit choice. Must eval
+
+		int32_t delta = deltaP + deltaI + deltaD;
 
 		// Limit the delta.
-		int32_t limitDelta = maxTickVal / 120;
+		int32_t limitDelta = maxTickVal / 200;
 		if (delta > limitDelta) {
+			cs_write("LIMIT, U\r\n");
 			delta = limitDelta;
 		}
 		if (delta < -limitDelta) {
+			cs_write("LIMIT, L\r\n");
 			delta = -limitDelta;
 		}
 
@@ -418,7 +423,7 @@ void PWM::onZeroCrossing() {
 		}
 
 		++_numSyncs;
-		if (_numSyncs == DIMMER_NUM_START_SYNCS_BETWEEN_FREQ_SYNC) {
+		if (_numSyncs == 1000) {
 			_numSyncs = 0;
 			_zeroCrossOffsetIntegral = 0;
 			_syncFrequency = true;
@@ -459,9 +464,18 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 	int32_t offsetInTicks = convert_us_to_ticks(offset);
 
 	if (_zeroCrossingCounter > 0) {
+
+		// int32_t prevOffset = _offsets[_zeroCrossingCounter - 1];
+
 		// By the time the code has reached this point, the zero counter is already incremented by 1 (via the onZeroCrossing interrupt).
 		// Hence, the offset has to be subtracted at one index lower.
 		_offsets[_zeroCrossingCounter - 1] -= offsetInTicks;
+
+		cs_write("ticks=%u err=%i \r\n", _currTicks, _offsets[_zeroCrossingCounter - 1]);
+
+		// int32_t newOffset = _offsets[_zeroCrossingCounter - 1];
+
+		// cs_write("err=%i err_raw=%i \r\n", newOffset, prevOffset);
 	}
 
 	if (_syncFrequency) {
@@ -474,7 +488,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		_zeroCrossingCounter = 0;
 
 		// Correct error for wrap around.
-		int32_t maxTickVal = _maxTickVal;
+		int32_t maxTickVal = _adjustedMaxTickVal;
 
 		// https://en.wikipedia.org/wiki/Repeated_median_regression
         // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,
@@ -518,15 +532,18 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		_numSyncs = 0;
 		int32_t medianSlope = medianSlopeMedian(_offsetSlopes3);
 
-		cs_write("%i \r\n", medianSlope);
+		// cs_write("slope=%i \r\n", medianSlope);
 
 		// Every full cycle (~20ms), the offset increases by slope.
 		// So the maxTickVal (half cycle, ~10ms) should be increased by half the slope.
+		// BE CAREFUL: Changing the `_adjustedMaxTickVal` variable means that the timer compare value will change
 		_adjustedMaxTickVal += medianSlope / 2;
 
 		// Make sure the minimum max ticks > 0.99 * _maxTickVal, else dimming at 99% won't work anymore.
 		uint32_t minMaxTickVal = _maxTickVal * 99 / 100 + 1;
 		if (_adjustedMaxTickVal < minMaxTickVal) {
+			cs_write("maxTickVal manual adj \r\n");
+
 			_adjustedMaxTickVal = minMaxTickVal;
 		}
 
@@ -536,7 +553,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		// Done with frequency synchronization.
 		_syncFrequency = false;
 
-//		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
+		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
 
 		// Set the new period time at the end of the current period.
 		enableInterrupt();
