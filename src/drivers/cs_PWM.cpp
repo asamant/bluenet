@@ -393,15 +393,15 @@ void PWM::onZeroCrossing() {
 		int32_t medianError = errorMedian(_offsets);
 
 		// Proportional part
-		int32_t deltaP = medianError * 1200 / maxTickVal;
+		int32_t deltaP = medianError * 2000 / maxTickVal;
 
 		// Add an integral part to the delta.
-		int32_t deltaI = _zeroCrossOffsetIntegral * 1 / DIMMER_NUM_CROSSINGS_FOR_START_SYNC / maxTickVal;
+		int32_t deltaI = _zeroCrossOffsetIntegral * 100 / DIMMER_NUM_CROSSINGS_FOR_START_SYNC / maxTickVal;
 
 		// Experimenting with a D controller
-		int32_t deltaD = (_offsets[7] - _offsets[3]) * 500/maxTickVal; // Arbit choice. Must eval
+		int32_t deltaD = (_offsets[DIMMER_NUM_CROSSINGS_FOR_START_SYNC - 1] - _offsets[0]) * 200 /maxTickVal; // Arbit choice. Must eval
 
-		int32_t delta = deltaP + deltaI + deltaD;
+		int32_t delta = deltaP + deltaD + deltaI;// + deltaI + deltaD;
 
 		// Limit the delta.
 		int32_t limitDelta = maxTickVal / 200;
@@ -423,13 +423,16 @@ void PWM::onZeroCrossing() {
 		}
 
 		++_numSyncs;
-		if (_numSyncs == 1000) {
+
+		if (_numSyncs == DIMMER_NUM_START_SYNCS_BETWEEN_FREQ_SYNC) {
 			_numSyncs = 0;
 			_zeroCrossOffsetIntegral = 0;
-			_syncFrequency = true;
+			// _syncFrequency = true;
 		}
 
-//		cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n", medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
+		// cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n", medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
+
+		cs_write("medErr=%i errInt=%i P=%i I=%i D=%i ticks=%u \r\n", medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, deltaD,  _adjustedMaxTickVal);
 
 		// Set the new period time at the end of the current period.
 		enableInterrupt();
