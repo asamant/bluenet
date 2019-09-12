@@ -28,7 +28,7 @@
 /**
  * Number of zero crossings until the timer max ticks is adjusted to synchronize the timer start with the grid zero crossing.
  */
-#define DIMMER_NUM_CROSSINGS_FOR_START_SYNC 5
+#define DIMMER_NUM_CROSSINGS_FOR_START_SYNC 7
 
 /**
  * Number of timer start synchronizations until synchronizing frequency again.
