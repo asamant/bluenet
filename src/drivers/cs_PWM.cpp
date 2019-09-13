@@ -368,71 +368,6 @@ void PWM::onZeroCrossing() {
 	_offsets[_zeroCrossingCounter] = errTicks;
 	++_zeroCrossingCounter;
 
-	if (!_syncFrequency){
-		// Integrate error, but limit the integrated error (to prevent overshoot).
-		// Careful that this doesn't overflow.
-		_zeroCrossOffsetIntegral += errTicks;
-
-		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_FOR_START_SYNC) {
-#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
-	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
-#endif
-			return;
-		}
-		_zeroCrossingCounter = 0;
-
-		// Bound integral
-		int32_t integralAbsMax = maxTickVal * DIMMER_NUM_CROSSINGS_FOR_START_SYNC * 100;
-		if (_zeroCrossOffsetIntegral > integralAbsMax) {
-			_zeroCrossOffsetIntegral = integralAbsMax;
-		}
-		if (_zeroCrossOffsetIntegral < -integralAbsMax) {
-			_zeroCrossOffsetIntegral = -integralAbsMax;
-		}
-
-		int32_t medianError = errorMedian(_offsets);
-
-		// Proportional part
-		int32_t deltaP = medianError * 1800 / maxTickVal;
-
-		// Add an integral part to the delta.
-		int32_t deltaI = _zeroCrossOffsetIntegral * 2 / DIMMER_NUM_CROSSINGS_FOR_START_SYNC / maxTickVal;
-
-		int32_t delta = deltaP + deltaI;
-
-		// Limit the delta.
-		int32_t limitDelta = maxTickVal / 200;
-		if (delta > limitDelta) {
-			cs_write("LIMIT, U\r\n");
-			delta = limitDelta;
-		}
-		if (delta < -limitDelta) {
-			cs_write("LIMIT, L\r\n");
-			delta = -limitDelta;
-		}
-
-		_adjustedMaxTickVal = _freqSyncedMaxTickVal + delta;
-
-		// Make sure the minimum max ticks > 0.99 * _maxTickVal, else dimming at 99% won't work anymore.
-		uint32_t minMaxTickVal = _maxTickVal * 99 / 100 + 1;
-		if (_adjustedMaxTickVal < minMaxTickVal) {
-			_adjustedMaxTickVal = minMaxTickVal;
-		}
-
-		++_numSyncs;
-
-		if (_numSyncs == DIMMER_NUM_START_SYNCS_BETWEEN_FREQ_SYNC) {
-			_zeroCrossOffsetIntegral = 0;
-			_numSyncs = 0;
-			_syncFrequency = true;
-		}
-
-		// cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n", medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
-
-
-		// Set the new period time at the end of the current period.
-		enableInterrupt();
-	}
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
 	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
 #endif
@@ -558,6 +493,75 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		enableInterrupt();
 	}
 
+	if (!_syncFrequency){
+
+		int32_t errTicks =  _offsets[_zeroCrossingCounter - 1];
+		int32_t maxTickVal = _adjustedMaxTickVal;
+
+		// Integrate error, but limit the integrated error (to prevent overshoot).
+		// Careful that this doesn't overflow.
+		_zeroCrossOffsetIntegral += errTicks;
+
+		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_FOR_START_SYNC) {
+#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
+	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
+#endif
+			return;
+		}
+
+		_zeroCrossingCounter = 0;
+
+		// Bound integral
+		int32_t integralAbsMax = maxTickVal * DIMMER_NUM_CROSSINGS_FOR_START_SYNC * 100;
+		if (_zeroCrossOffsetIntegral > integralAbsMax) {
+			_zeroCrossOffsetIntegral = integralAbsMax;
+		}
+		if (_zeroCrossOffsetIntegral < -integralAbsMax) {
+			_zeroCrossOffsetIntegral = -integralAbsMax;
+		}
+
+		int32_t medianError = errorMedian(_offsets);
+
+		// Proportional part
+		int32_t deltaP = medianError * 1800 / maxTickVal;
+
+		// Add an integral part to the delta.
+		int32_t deltaI = _zeroCrossOffsetIntegral * 2 / DIMMER_NUM_CROSSINGS_FOR_START_SYNC / maxTickVal;
+
+		int32_t delta = deltaP + deltaI;
+
+		// Limit the delta.
+		int32_t limitDelta = maxTickVal / 200;
+		if (delta > limitDelta) {
+			cs_write("LIMIT, U\r\n");
+			delta = limitDelta;
+		}
+		if (delta < -limitDelta) {
+			cs_write("LIMIT, L\r\n");
+			delta = -limitDelta;
+		}
+
+		_adjustedMaxTickVal = _freqSyncedMaxTickVal + delta;
+
+		// Make sure the minimum max ticks > 0.99 * _maxTickVal, else dimming at 99% won't work anymore.
+		uint32_t minMaxTickVal = _maxTickVal * 99 / 100 + 1;
+		if (_adjustedMaxTickVal < minMaxTickVal) {
+			_adjustedMaxTickVal = minMaxTickVal;
+		}
+
+		++_numSyncs;
+
+		if (_numSyncs == DIMMER_NUM_START_SYNCS_BETWEEN_FREQ_SYNC) {
+			_zeroCrossOffsetIntegral = 0;
+			_numSyncs = 0;
+			_syncFrequency = true;
+		}
+
+		cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n",  medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
+
+		// Set the new period time at the end of the current period.
+		enableInterrupt();
+	}
 }
 
 void PWM::handleEvent(event_t & event) {
@@ -570,6 +574,7 @@ void PWM::handleEvent(event_t & event) {
 		break;
 		}
 	case (CS_TYPE::EVT_ADC_RESTARTED) : {
+
 		cs_write("ADC RESTART!\r\n");
 		break;
 	}
@@ -662,13 +667,16 @@ uint32_t PWM::readCC(uint8_t channelIdx) {
 }
 
 void PWM::wrapAround(int32_t& val, int32_t max) {
-//	val = (val + max / 2) % max - max / 2;
+	val = (val + max / 2) % max - max / 2;
+
+	/*
 	if (val > max / 2) {
 		val -= max;
 	}
 	else if (val < -max / 2) {
 		val += max;
 	}
+	*/
 }
 
 nrf_timer_cc_channel_t PWM::getTimerChannel(uint8_t index) {
