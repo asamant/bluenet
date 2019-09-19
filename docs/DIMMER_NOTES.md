@@ -98,7 +98,9 @@ At this point, we're reasonably certain that we know the frequency accurately, a
 - Since frequency drift could be an issue, we'd want to sync the frequency of the timer interrupts with the input supply once every often.
 - Doing this involves the RMR-based slope calculation process. But the slope calculation process invovles a high sampling rate of the voltage -->
 
-#### With the ADC's sampling rate limitation
+#### Additional points to take into consideration
+
+##### With the ADC's sampling rate limitation
 
 In the slope calculation-based method, we make an assumption that the ADC can sample at a very high rate and hence the samples we get are at almost the same rate as the clock ticks. However, due to practical limitations, the ADC is much slower and thus the time error offset values we get are limited by the ADC's sample rate (i.e. say the actual zero crossing occurs at an offset of 4 ticks but the next ADC timer tick is at 200, the offset reported will be 200, which 196 clock ticks away from the actual occurrence. Moreover, anything between 0 and 200 will be reported as 200, and thus the slope will practically be 0.)
 
@@ -123,6 +125,14 @@ The offset value is provided by the ADC in the form of an event which is raised 
 -->
 
 ![slope-algo](./images/dimmer/errors_compensated.png "Raw data vs compensated data")
+
+##### With the ADC interrupts and events
+
+Since the zero crossing *interrupt* and zero crossing *event* (both raised by the ADC driver) are not temporally dependent (i.e. the event is always *expected* to be just after the interrupt, but there's no guarantee), there could be cases in which the interrupt is raised twice before an event, and hence the offset compensation calculations could go wrong (i.e. the wrong error value may be compensated.) Thus, a check has to be put in which ensures that only those ADC zero crossing events just after interrupts are compensated, and the rest are not considered (i.e. the timer compare value is kept unchanged for those error values.)
+
+##### With varied zero interrupt timings
+
+In some cases (for instance, when the mesh state is communicated) the processor may be busy and cause the ADC to skip some zero crossings. In such cases, the error values may shoot up all of a sudden and cause the PI controller to overcompensate. Thus, the bulb may flicker at such points. A good approach would be to identify such cases and reduce the error gently.
 
 ### Other algorithms
 
