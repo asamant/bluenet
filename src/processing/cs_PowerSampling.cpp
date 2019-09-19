@@ -528,6 +528,23 @@ void PowerSampling::calculatePower(power_t power) {
 	// Now that Irms is known: first check the soft fuse.
 //	if (_zeroCurrentInitialized && _zeroVoltageInitialized) {
 	if (_zeroVoltageCount > 200 && _zeroCurrentCount > 200) { // Wait some time, for the measurement to converge.. why does this have to take so long?
+
+
+		if (filteredCurrentRmsMA > 1000) {
+		LOGd("C0=%i Crms=%i CrmsMed=%i", _avgZeroCurrent, filteredCurrentRmsMA, filteredCurrentRmsMedianMA);
+		cs_write("current: ");
+		for (int i = power.currentIndex; i < numSamples * power.numChannels; i += power.numChannels) {
+		cs_write("%u ", power.buf[i]);
+		}
+		cs_write("\r\n");
+		cs_write("voltage: ");
+		for (int i = power.voltageIndex; i < numSamples * power.numChannels; i += power.numChannels) {
+		cs_write("%u ", power.buf[i]);
+		}
+		cs_write("\r\n");
+		}
+
+
 		checkSoftfuse(filteredCurrentRmsMedianMA, filteredCurrentRmsMedianMA);
 	}
 

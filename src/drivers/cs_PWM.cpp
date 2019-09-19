@@ -11,6 +11,7 @@
 #include "cfg/cs_Strings.h"
 #include "protocol/cs_ErrorCodes.h"
 #include "third/optmed.h"
+#include <drivers/cs_RTC.h>
 
 #include <nrf.h>
 #include <app_util_platform.h>
@@ -36,6 +37,12 @@
 // Define test pin to enable gpio debug.
 #define PWM_DEBUG_PIN_ZERO_CROSSING_INT 16
 #define PWM_DEBUG_PIN_TIMER_INT 17
+
+// TO REVERT
+int32_t _sequenceCounter = 0;
+bool _dont = false;
+
+uint32_t _timerVal;
 
 PWM::PWM() :
 		_initialized(false),
@@ -333,6 +340,15 @@ uint16_t PWM::getValue(uint8_t channel) {
 }
 
 void PWM::onZeroCrossing() {
+
+	uint32_t rtcTime = RTC::getCount();
+
+	int32_t interInterruptTime = RTC::difference(rtcTime, _timerVal);
+
+	cs_write("inter-zero crossing: %i \r\n", interInterruptTime);
+
+	_timerVal = rtcTime;
+
 	// Capture timer value as soon as possible.
 	nrf_timer_task_trigger(CS_PWM_TIMER, ZERO_CROSSING_CAPTURE_TASK);
 
@@ -353,6 +369,18 @@ void PWM::onZeroCrossing() {
 #endif
 		return;
 	}
+
+	_dont = false;
+
+	// wrong error. Chill
+	if (_sequenceCounter != 0){
+		_dont = true;
+		return;
+	}
+
+	// To check the sequence of calls between this callback and the event callback
+	_sequenceCounter++;
+
 	_currTicks = nrf_timer_cc_read(CS_PWM_TIMER, getTimerChannel(ZERO_CROSSING_CHANNEL_IDX));
 
 	int32_t targetTicks = 0;
@@ -392,10 +420,25 @@ int32_t PWM::convert_us_to_ticks(int32_t time_us){
 }
 
 void PWM::onZeroCrossingTimeOffset(int32_t offset) {
+
 	// Although it might happen that we subtract from the wrong entry, it should improve the measurements.
 	// TODO: at the last sample, the counter was set to 0, making it not being compensated by the offset.
 
+	--_sequenceCounter; // should be 0 after this
+
+	if (_sequenceCounter != 0){
+		// wrong compensation
+		cs_write("OO Sequence!! \r\n");
+		_sequenceCounter = 0;
+	}
+
+	if (_dont){
+		// no point compensating
+		return;
+	}
+
 	int32_t offsetInTicks = convert_us_to_ticks(offset);
+
 
 	if (_zeroCrossingCounter > 0) {
 
@@ -405,11 +448,9 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		// Hence, the offset has to be subtracted at one index lower.
 		_offsets[_zeroCrossingCounter - 1] -= offsetInTicks;
 
-		cs_write("ticks=%u err=%i \r\n", _currTicks, _offsets[_zeroCrossingCounter - 1]);
-
 		// int32_t newOffset = _offsets[_zeroCrossingCounter - 1];
 
-		// cs_write("err=%i err_raw=%i \r\n", newOffset, prevOffset);
+		// cs_write("err=%i err_raw=%i adc_off=%i\r\n", newOffset, prevOffset, offsetInTicks);
 	}
 
 	if (_syncFrequency) {
@@ -466,6 +507,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		_numSyncs = 0;
 		int32_t medianSlope = medianSlopeMedian(_offsetSlopes3);
 
+
 		// cs_write("slope=%i \r\n", medianSlope);
 
 		// Every full cycle (~20ms), the offset increases by slope.
@@ -487,7 +529,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		// Done with frequency synchronization.
 		_syncFrequency = false;
 
-		cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
+		// cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
 
 		// Set the new period time at the end of the current period.
 		enableInterrupt();
@@ -521,6 +563,9 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		}
 
 		int32_t medianError = errorMedian(_offsets);
+
+		// TODO: Use this accumulated error to sync frequency instead of the freerunning mechanism
+		// _accumulatedError += medianError;
 
 		// Proportional part
 		int32_t deltaP = medianError * 1800 / maxTickVal;
@@ -557,7 +602,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 			_syncFrequency = true;
 		}
 
-		cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n",  medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
+		// cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n",  medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
 
 		// Set the new period time at the end of the current period.
 		enableInterrupt();
