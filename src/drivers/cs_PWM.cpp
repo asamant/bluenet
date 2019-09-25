@@ -35,8 +35,10 @@
 #define ZERO_CROSSING_CAPTURE_TASK  NRF_TIMER_TASK_CAPTURE3
 
 // Define test pin to enable gpio debug.
-#define PWM_DEBUG_PIN_ZERO_CROSSING_INT 16
-#define PWM_DEBUG_PIN_TIMER_INT 17
+#define PWM_DEBUG_PIN_ZERO_CROSSING_INT 15
+#define PWM_DEBUG_PIN_TIMER_INT 16
+
+#define PWM_DEBUG_PIN_TIMER_EVT 18
 
 // TO REVERT
 int32_t _sequenceCounter = 0;
@@ -109,6 +111,9 @@ uint32_t PWM::init(const pwm_config_t& config) {
 #endif
 #ifdef PWM_DEBUG_PIN_TIMER_INT
     nrf_gpio_cfg_output(PWM_DEBUG_PIN_TIMER_INT);
+#endif
+#ifdef PWM_DEBUG_PIN_TIMER_EVT
+    nrf_gpio_cfg_output(PWM_DEBUG_PIN_TIMER_EVT);
 #endif
 
     _initialized = true;
@@ -341,6 +346,9 @@ uint16_t PWM::getValue(uint8_t channel) {
 
 void PWM::onZeroCrossing() {
 
+	// Capture timer value as soon as possible.
+	nrf_timer_task_trigger(CS_PWM_TIMER, ZERO_CROSSING_CAPTURE_TASK);
+
 	uint32_t rtcTime = RTC::getCount();
 
 	int32_t interInterruptTime = RTC::difference(rtcTime, _timerVal);
@@ -348,9 +356,6 @@ void PWM::onZeroCrossing() {
 	cs_write("inter-zero crossing: %i \r\n", interInterruptTime);
 
 	_timerVal = rtcTime;
-
-	// Capture timer value as soon as possible.
-	nrf_timer_task_trigger(CS_PWM_TIMER, ZERO_CROSSING_CAPTURE_TASK);
 
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
 	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
@@ -463,7 +468,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		_zeroCrossingCounter = 0;
 
 		// Correct error for wrap around.
-		int32_t maxTickVal = _adjustedMaxTickVal;
+		int32_t maxTickVal = _freqSyncedMaxTickVal;
 
 		// https://en.wikipedia.org/wiki/Repeated_median_regression
         // This way we only need to calculate the median of (DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC - 1) values,

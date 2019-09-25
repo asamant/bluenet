@@ -31,7 +31,7 @@
 #define LOGAdcInterrupt LOGnone
 
 // Define test pin to enable gpio debug.
-//#define TEST_PIN_ZERO_CROSS 20
+#define TEST_PIN_ZERO_CROSS 17
 //#define TEST_PIN_TIMEOUT    20 // Controlled via GPIOTE
 //#define TEST_PIN_START      22
 //#define TEST_PIN_STOP       23
@@ -721,10 +721,7 @@ void ADC::_handleAdcLimitInterrupt(nrf_saadc_limit_t type) {
 			uint32_t curTime = RTC::getCount();
 			uint32_t diffTicks = RTC::difference(curTime, _lastZeroCrossUpTime);
 
-			// REVERT
-			cs_write("ADC_inter: %i\r\n", diffTicks);
-
-			if ((_zeroCrossingCallback != NULL) && (diffTicks > RTC::msToTicks(17)) && (diffTicks < RTC::msToTicks(23))) {
+			if ((_zeroCrossingCallback != NULL) && (diffTicks > RTC::msToTicks(19)) && (diffTicks < RTC::msToTicks(21))) {
 				_zeroCrossingCallback();
 			}
 			_lastZeroCrossUpTime = curTime;
