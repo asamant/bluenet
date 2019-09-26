@@ -14,15 +14,35 @@ Essentially, through PWM, power supply to the bulb is lowered in proportion to t
 
 Crownstones use trailing-edge dimming (see [this](https://github.com/crownstone/bluenet/blob/master/docs/DIMMER.md) document for reference.) [Perhaps this is subject to change, depending on the load; **must verify**]
 
-*Zero-crossing* refers to a voltage transition from either a negative value to a positive value or vice versa. Hence, in a sine wave, there are two voltage zero crossings per cycle. This information is very important given the PWM gating has to be synced accordingly.
+![Overview](./diagrams/dimmer/basic_terms.svg "An overview of the dimmer")
+*Fig.: The mains power supply in an **ideal** situation and **ideal** PWM switching that's perfectly synchronized to the supply sine wave. However, an actual supply wave isn't a perfect sine wave and the zero crossings aren't perfectly synced to the PWM switch, as will soon be explained*
+
+*Zero-crossing* refers to a voltage transition from either a negative value to a positive value or vice versa. Hence, in a sine wave, there are two voltage zero crossings per cycle. This information is very important given the PWM gating has to be synced accordingly, i.e., the gating ON should ideally begin at *exactly* the zero crossing time instant and should last for D % of the half-wave period (where D is the dimming value expressed as a percentage) before going low i.e. turning OFF.
+
+This ensures that the power delivered to the appliance (bulb) from the mains supply to the bulb is reduced as a function of the D value.
 
 The Crownstone implementation involves interrupts, timers, and an ADC (on an [nRF52382 SoC](https://www.nordicsemi.com/Products/Low-power-short-range-wireless/nRF52832)). The dimming algorithms hence rely more on how the control software is written subject to some hardware constraints (for instance, sampling rate.)
+
+![adc-sampling-rate](./diagrams/dimmer/ADC_sampling.svg "ADC sampling limitations")
+*Fig.: The PWM timer keeps running, and the value captured at the zero crossing is the one corresponding to the ADC sample circled in red; the zero crossing interrupt times are "binned" as per the ADC's sampling rate*
+
+
+### Why not assume a constant mains frequency?
+
+Ideally, the mains supply (50/60 Hz) should be constant throughout and we needn't have to synchronize with it more than once at the beginning. However, in practice, [there is a variation](https://wwwhome.ewi.utwente.nl/~ptdeboer/misc/mains.html) in the supply frequency brought about by enivronmental factors, load variations, etc. due to which we cannot assume a constant value between consecutive zero crossings.
+
+For instance, say, we keep track of timing using a 4 MHz crystal timer. Now, for a frequency of 50 Hz, we have (4000000/50) = 80000 timer ticks per cycle of the sine wave. A quick look at [frequency variations](https://www.mainsfrequency.com) shows that there could be minor deviations from the nominal value of 50 Hz, and considering even a relatively close value of say, 49.990 Hz (error of 0.01 Hz), we have the following:
+
+Actual number of ticks between cycles = (4000000/49.990) = 80016
+Hence, error per cycle = (80016 - 80000) = 16 ticks
+Error per minute = 16 * 50 * 60 = 48000 ticks = more than 50% of the period.
+
+Hence, in such a scenario, the Crownstone could go completely out of sync with the mains supply and start fading on and off.
+
 
 ### Implementation in a nutshell
 
 The ADC detects zero crossings, its driver conveys this information to the PWM driver, and the PWM driver accordingly tries to sync with the frequency of the input supply and handles the duty cycle-based gating of power supply to the plug outlet connected to the Crownstone.
-
-![Overview](./diagrams/dimmer/basic_terms.svg "An overview of the dimmer")
 
 ### Breaking it down
 
@@ -104,7 +124,6 @@ At this point, we're reasonably certain that we know the frequency accurately, a
 
 In the slope calculation-based method, we make an assumption that the ADC can sample at a very high rate and hence the samples we get are at almost the same rate as the clock ticks. However, due to practical limitations, the ADC is much slower and thus the time error offset values we get are limited by the ADC's sample rate (i.e. say the actual zero crossing occurs at an offset of 4 ticks but the next ADC timer tick is at 200, the offset reported will be 200, which 196 clock ticks away from the actual occurrence. Moreover, anything between 0 and 200 will be reported as 200, and thus the slope will practically be 0.)
 
-![adc-sampling-rate](./diagrams/dimmer/ADC_sampling.svg "ADC sampling limitations")
 
 Such jumps in the offset values completely ruin the slope calculation if performed *as is*, and hence we need to follow a slightly different approach for calculating the slope values.
 
