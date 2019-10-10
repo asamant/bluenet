@@ -478,7 +478,7 @@ void asACR01B10B(boards_config_t* p_config) {
 
 void asACR01B10C(boards_config_t* p_config) {
 	p_config->pinGpioPwm                         = 8;
-//	p_config->pinGpioPwm                         = 15;
+//	p_config->pinGpioPwm                         = 18;
 	p_config->pinGpioEnablePwm                   = 10; // Only for v21, but on v20 this pin is not connected.
 	p_config->pinGpioRelayOn                     = 14;
 	p_config->pinGpioRelayOff                    = 13;

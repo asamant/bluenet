@@ -161,6 +161,7 @@ void Crownstone::init(uint16_t step) {
 
 		LOGi(FMT_CREATE, "timer");
 		_timer->createSingleShot(_mainTimerId, (app_timer_timeout_handler_t)Crownstone::staticTick);
+
 		LOG_FLUSH();
 
 		LOGi(FMT_HEADER, "mode");
@@ -1050,6 +1051,8 @@ int main() {
 	// init drivers, configure(), create services and chars,
 	crownstone.init(0);
 	LOG_FLUSH();
+
+	activate_hfclk();
 
 	// run forever ...
 	crownstone.run();

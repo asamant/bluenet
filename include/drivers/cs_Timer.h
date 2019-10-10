@@ -61,3 +61,5 @@ private:
 
 };
 
+void activate_hfclk();
+

@@ -44,6 +44,9 @@
 #define LIMIT_HIGH_DISABLED (4095)  // max adc value
 #define BUFFER_INDEX_NONE 255
 
+// TODO: Revert. Only using for logs
+uint32_t _lastZeroCrossCallbackTime = 0;
+
 
 // Called by app scheduler, from saadc interrupt.
 void adc_done(void * p_event_data, uint16_t event_size) {
@@ -720,12 +723,26 @@ void ADC::_handleAdcLimitInterrupt(nrf_saadc_limit_t type) {
 			// This makes it more likely that this was an actual zero crossing.
 			uint32_t curTime = RTC::getCount();
 			uint32_t diffTicks = RTC::difference(curTime, _lastZeroCrossUpTime);
+			// uint32_t diffTicksZeroCrossingCallback = RTC::difference(curTime, _lastZeroCrossCallbackTime);
+
 
 			if ((_zeroCrossingCallback != NULL) && (diffTicks > RTC::msToTicks(19)) && (diffTicks < RTC::msToTicks(21))) {
 				_zeroCrossingCallback();
+
+				// Log values between successive PWM driver calls
+				_lastZeroCrossCallbackTime = curTime;
+
 			}
 			_lastZeroCrossUpTime = curTime;
+
+			// Log values between successive ADC calls
+			// cs_write("ADC_int: %u PWM_int: %u \r\n", diffTicks, diffTicksZeroCrossingCallback);
 		}
+
+#ifdef TEST_PIN_ZERO_CROSS
+		nrf_gpio_pin_toggle(TEST_PIN_ZERO_CROSS);
+#endif
+
 	}
 	_firstLimitInterrupt = false;
 }

@@ -38,13 +38,85 @@
 #define PWM_DEBUG_PIN_ZERO_CROSSING_INT 15
 #define PWM_DEBUG_PIN_TIMER_INT 16
 
-#define PWM_DEBUG_PIN_TIMER_EVT 18
+//#define PWM_DEBUG_PIN_TIMER_EVT 18
 
-// TO REVERT
-int32_t _sequenceCounter = 0;
-bool _dont = false;
+#define NUM_MOVING_AVERAGE_READINGS 10
+
+#define NUM_MAX_TICK_VAL_HISTORY 5
+
+// History of timer values
+uint32_t _maxTickValuesHistory[NUM_MAX_TICK_VAL_HISTORY];
+
+// MOVING AVERAGE-RELATED
+uint32_t _total;
+uint32_t _readIndex;
+uint32_t _readings[NUM_MOVING_AVERAGE_READINGS];
+uint32_t _curMovingAvg;
+
+// ERROR DELTA MOVING AVERAGE-RELATED
+int32_t _totalError;
+int32_t _errReadIndex;
+int32_t _errDeltaReadings[NUM_MOVING_AVERAGE_READINGS];
 
 uint32_t _timerVal;
+bool _skipEvent = false;
+
+// Source : https://www.arduino.cc/en/Tutorial/Smoothing
+uint32_t PWM::calculateMovingAverage(uint32_t newData){
+	  // subtract the last reading:
+	_total = _total - _readings[_readIndex];
+	  // read from the sensor:
+	_readings[_readIndex] = newData;
+	  // add the reading to the total:
+	_total = _total + _readings[_readIndex];
+	  // advance to the next position in the array:
+	  _readIndex = _readIndex + 1;
+
+	  // if we're at the end of the array...
+	  if (_readIndex >= NUM_MOVING_AVERAGE_READINGS) {
+	    // ...wrap around to the beginning:
+		  _readIndex = 0;
+	  }
+
+	  // calculate the average:
+	  int32_t average = _total / NUM_MOVING_AVERAGE_READINGS;
+
+	  return average;
+	}
+
+int32_t PWM::calculateErrorMovingAverage(int32_t newError){
+	  // subtract the last reading:
+	_totalError = _totalError - _errDeltaReadings[_errReadIndex];
+	  // read from the sensor:
+	_errDeltaReadings[_errReadIndex] = newError;
+	  // add the reading to the total:
+	_totalError = _totalError + _errDeltaReadings[_errReadIndex];
+	  // advance to the next position in the array:
+	_errReadIndex = _errReadIndex + 1;
+
+	  // if we're at the end of the array...
+	  if (_errReadIndex >= NUM_MOVING_AVERAGE_READINGS) {
+	    // ...wrap around to the beginning:
+		  _errReadIndex = 0;
+	  }
+
+	  // calculate the average:
+	  int32_t average = _totalError / NUM_MOVING_AVERAGE_READINGS;
+
+	  return average;
+	}
+
+void PWM::initializeMovingAverage(uint32_t initVal){
+
+	_total = 0;
+
+	for (int i = 0; i < NUM_MOVING_AVERAGE_READINGS; ++i){
+		_readings[i] = initVal;
+		_total += initVal;
+	}
+
+	_readIndex = 0;
+}
 
 PWM::PWM() :
 		_initialized(false),
@@ -119,6 +191,7 @@ uint32_t PWM::init(const pwm_config_t& config) {
     _initialized = true;
 
     EventDispatcher::getInstance().addListener(this);
+
     return ERR_SUCCESS;
 #endif
 
@@ -353,8 +426,6 @@ void PWM::onZeroCrossing() {
 
 	int32_t interInterruptTime = RTC::difference(rtcTime, _timerVal);
 
-	cs_write("inter-zero crossing: %i \r\n", interInterruptTime);
-
 	_timerVal = rtcTime;
 
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
@@ -372,19 +443,21 @@ void PWM::onZeroCrossing() {
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
 	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
 #endif
+
 		return;
 	}
 
-	_dont = false;
+	_skipEvent = false;
 
-	// wrong error. Chill
-	if (_sequenceCounter != 0){
-		_dont = true;
+	if (interInterruptTime > 1000 || interInterruptTime < -1000){
+		// If there is a significant delay in the interrupt, it probably is an anomaly. Don't apply control changes.
+#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
+	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
+#endif
+
+	_skipEvent = true;
 		return;
 	}
-
-	// To check the sequence of calls between this callback and the event callback
-	_sequenceCounter++;
 
 	_currTicks = nrf_timer_cc_read(CS_PWM_TIMER, getTimerChannel(ZERO_CROSSING_CHANNEL_IDX));
 
@@ -399,7 +472,7 @@ void PWM::onZeroCrossing() {
 
 	// Store error.
 	_offsets[_zeroCrossingCounter] = errTicks;
-	++_zeroCrossingCounter;
+	// ++_zeroCrossingCounter;
 
 #ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
 	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
@@ -429,40 +502,32 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 	// Although it might happen that we subtract from the wrong entry, it should improve the measurements.
 	// TODO: at the last sample, the counter was set to 0, making it not being compensated by the offset.
 
-	--_sequenceCounter; // should be 0 after this
-
-	if (_sequenceCounter != 0){
-		// wrong compensation
-		cs_write("OO Sequence!! \r\n");
-		_sequenceCounter = 0;
-	}
-
-	if (_dont){
-		// no point compensating
+	if (_skipEvent){
+		cs_write("SKIPPING EVENT!! \r\n");
 		return;
 	}
 
 	int32_t offsetInTicks = convert_us_to_ticks(offset);
 
+	if (_zeroCrossingCounter >= 0) {
 
-	if (_zeroCrossingCounter > 0) {
+		//int32_t prevOffset = _offsets[_zeroCrossingCounter];
 
-		// int32_t prevOffset = _offsets[_zeroCrossingCounter - 1];
+		_offsets[_zeroCrossingCounter] -= offsetInTicks;
 
-		// By the time the code has reached this point, the zero counter is already incremented by 1 (via the onZeroCrossing interrupt).
-		// Hence, the offset has to be subtracted at one index lower.
-		_offsets[_zeroCrossingCounter - 1] -= offsetInTicks;
+		int32_t newOffset = _offsets[_zeroCrossingCounter];
 
-		// int32_t newOffset = _offsets[_zeroCrossingCounter - 1];
+		// int32_t mv_avg = calculateErrorMovingAverage(newOffset);
 
-		// cs_write("err=%i err_raw=%i adc_off=%i\r\n", newOffset, prevOffset, offsetInTicks);
+		 ++_zeroCrossingCounter;
+
+		cs_write("ticks=%u err=%i off= %i\r\n", _currTicks, newOffset, offsetInTicks);
+
+		 // cs_write("err_raw=%i err=%i \r\n", prevOffset, newOffset);
 	}
 
 	if (_syncFrequency) {
 		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_PER_SLOPE_ESTIMATE) {
-#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
-	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
-#endif
 			return;
 		}
 		_zeroCrossingCounter = 0;
@@ -504,9 +569,6 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 
 
 		if (_numSyncs < DIMMER_NUM_SLOPE_ESTIMATES_FOR_FREQUENCY_SYNC) {
-#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
-	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
-#endif
 			return;
 		}
 		_numSyncs = 0;
@@ -536,13 +598,18 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 
 		// cs_write("slope=%i ticks=%u \r\n", medianSlope, _adjustedMaxTickVal);
 
+		// Since we're now synced with the mains
+		initializeMovingAverage(_adjustedMaxTickVal);
+
 		// Set the new period time at the end of the current period.
 		enableInterrupt();
+
+		return;
 	}
 
 	if (!_syncFrequency){
 
-		int32_t errTicks =  _offsets[_zeroCrossingCounter - 1];
+		int32_t errTicks =  _offsets[_zeroCrossingCounter];
 		int32_t maxTickVal = _adjustedMaxTickVal;
 
 		// Integrate error, but limit the integrated error (to prevent overshoot).
@@ -550,9 +617,6 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		_zeroCrossOffsetIntegral += errTicks;
 
 		if (_zeroCrossingCounter < DIMMER_NUM_CROSSINGS_FOR_START_SYNC) {
-#ifdef PWM_DEBUG_PIN_ZERO_CROSSING_INT
-	nrf_gpio_pin_toggle(PWM_DEBUG_PIN_ZERO_CROSSING_INT);
-#endif
 			return;
 		}
 
@@ -604,7 +668,7 @@ void PWM::onZeroCrossingTimeOffset(int32_t offset) {
 		if (_numSyncs == DIMMER_NUM_START_SYNCS_BETWEEN_FREQ_SYNC) {
 			_zeroCrossOffsetIntegral = 0;
 			_numSyncs = 0;
-			_syncFrequency = true;
+			_syncFrequency = false;
 		}
 
 		// cs_write("medErr=%i errInt=%i P=%i I=%i ticks=%u \r\n",  medianError, _zeroCrossOffsetIntegral, deltaP, deltaI, _adjustedMaxTickVal);
@@ -637,6 +701,21 @@ void PWM::handleEvent(event_t & event) {
 /////////////////////////////////////////
 //          Private functions          //
 /////////////////////////////////////////
+
+uint32_t PWM::calculateMaxTickVal(int32_t delta){
+
+
+	uint32_t movingAvg = _curMovingAvg;
+
+	uint32_t calculatedNextTick = _freqSyncedMaxTickVal + delta;
+
+	// Weighted average
+	uint32_t predictedNextTick = (5*movingAvg + 25*calculatedNextTick)/30;
+
+	// cs_write("pred: %u \r\n", predictedNextTick);
+
+	return predictedNextTick;
+}
 
 
 
@@ -879,5 +958,6 @@ extern "C" void CS_PWM_TIMER_IRQ(void) {
 	// Clear and disable interrupt until next change.
 	nrf_timer_int_disable(CS_PWM_TIMER, nrf_timer_compare_int_get(PERIOD_CHANNEL_IDX));
 	PWM::getInstance()._handleInterrupt();
+
 //	}
 }

@@ -60,6 +60,21 @@ public:
 	}
 
 	/**
+	 * Calculate the moving average over a fixed size window
+	 */
+	uint32_t calculateMovingAverage(uint32_t newData);
+
+	/**
+	 * Calculate the moving average over a fixed size window
+	 */
+	int32_t calculateErrorMovingAverage(int32_t newError);
+
+	/**
+	 * Initialize buffers for moving average calculations
+	 */
+	void initializeMovingAverage(uint32_t initVal);
+
+	/**
 	 * Initialize the PWM settings.
 	 * config can be safely deleted after calling this function.
 	 */
@@ -95,6 +110,9 @@ public:
 	//! Event handler: to measure the offset between the detected zero crossing timer value and the true zero timer value
 	void handleEvent(event_t & event);
 
+	//! Enables the timer interrupt, to change the pwm value.
+	void enableInterrupt();
+
 private:
 	//! Private PWM constructor
 	PWM();
@@ -125,6 +143,9 @@ private:
 
 	//! Actually start the PWM
 	void start();
+
+	//! Internal calculations for the new timer compare value
+	uint32_t calculateMaxTickVal(int32_t delta);
 
 	// -----------------------------------
 	// ----- Implementation specific -----
@@ -235,8 +256,8 @@ private:
 	//! Function to be called when the offset (in μs) of the previous zero crossing was calculated.
 	void onZeroCrossingTimeOffset(int32_t offset);
 
-	//! Enables the timer interrupt, to change the pwm value.
-	void enableInterrupt();
+//	//! Enables the timer interrupt, to change the pwm value.
+//	void enableInterrupt();
 
 	//! Helper function to get the timer channel, given the index.
 	nrf_timer_cc_channel_t getTimerChannel(uint8_t index);

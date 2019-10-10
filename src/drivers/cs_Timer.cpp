@@ -9,6 +9,7 @@
 #include <drivers/cs_Serial.h>
 #include <cfg/cs_Strings.h>
 #include <util/cs_BleError.h>
+#include "nrfx_clock.h"
 
 Timer& Timer::getInstance() {
 	static Timer instance;
@@ -42,4 +43,11 @@ void Timer::stop(app_timer_id_t& timer_handle) {
 void Timer::reset(app_timer_id_t& timer_handle, uint32_t ticks, void* obj) {
 	BLE_CALL(app_timer_stop, (timer_handle));
 	BLE_CALL(app_timer_start, (timer_handle, ticks, obj));
+}
+
+void activate_hfclk(){
+	// Perhaps no the most appropriate place to start the HF timer
+	sd_clock_hfclk_request();
+	// nrfx_clock_hfclk_start();
+ 	while(!nrfx_clock_hfclk_is_running());
 }
