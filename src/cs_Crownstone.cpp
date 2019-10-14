@@ -1016,6 +1016,7 @@ int main() {
 		LOG_FLUSH();
 	}
 
+
 //	// Make a "clicker"
 //	nrf_delay_ms(1000);
 //	nrf_gpio_pin_set(board.pinGpioRelayOn);
@@ -1048,11 +1049,11 @@ int main() {
 
 	overwrite_hardware_version();
 
+	activate_hfclk();
+
 	// init drivers, configure(), create services and chars,
 	crownstone.init(0);
 	LOG_FLUSH();
-
-	activate_hfclk();
 
 	// run forever ...
 	crownstone.run();

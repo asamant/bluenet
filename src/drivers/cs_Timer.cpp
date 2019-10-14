@@ -47,7 +47,15 @@ void Timer::reset(app_timer_id_t& timer_handle, uint32_t ticks, void* obj) {
 
 void activate_hfclk(){
 	// Perhaps no the most appropriate place to start the HF timer
-	sd_clock_hfclk_request();
+	// sd_clock_hfclk_request();
 	// nrfx_clock_hfclk_start();
- 	while(!nrfx_clock_hfclk_is_running());
+
+	// Start the external high frequency crystal
+	NRF_CLOCK->EVENTS_HFCLKSTARTED = 0;
+	NRF_CLOCK->TASKS_HFCLKSTART = 1;
+
+	// Wait for the external oscillator to start up
+	while (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0) {}
+
+ 	// while(!nrfx_clock_hfclk_is_running());
 }
